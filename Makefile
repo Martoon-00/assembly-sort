@@ -5,7 +5,7 @@ endif
 PROG = sort
 
 build:
-	nasm -f elf64 $(STABS) ./src/$(PROG).asm -o ./target/$(PROG).o
+	nasm -f elf $(STABS) ./src/$(PROG).asm -o ./target/$(PROG).o
 	ld ./target/$(PROG).o -o ./target/$(PROG)
 ifeq ($(DEBUG),1)
 	cp ./src/$(PROG).asm ./target
