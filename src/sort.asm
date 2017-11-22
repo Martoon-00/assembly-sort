@@ -22,6 +22,8 @@
 %1_len equ $ - %1
    %endmacro 
 
+   %define string_max_len 0x100
+
    ;;
    ;;
    ;; Data
@@ -34,6 +36,8 @@
    strings resb 1000            ;TODO: unlimited
    ;; pairs (key_address, value_address) for strings read from file
    index resq 100
+   ;; helper buffer for merge sort
+   index_temp resq 100          ; TODO: get off!
    ;; temporal storage for 'print_num' functions
    print_num_buffer resb 11
 
@@ -100,7 +104,15 @@ mark_index_3_table:
    section .text
    global _start   
 
-   ;; accepts positive number in %eax and prints it
+;;;;;;;;; print_num
+;;; 
+;;; Description: Prints number
+;;; 
+;;; Args: %eax - non-negative number to print
+;;; 
+;;; Registers Used: all (we don't care since it's used to report errors only)
+;;; 
+;;;;;;;;; 
 print_num:
    lea   esi, [print_num_buffer - 1]
    add   esi, [print_num_buffer_len]
@@ -127,10 +139,160 @@ print_num:
 
    ret
 
+;;;;;;;;; merge-sort
+;;; 
+;;; Description:
+;;; 
+;;; Args:
+;;;   %esi - unsorted index
+;;;   %ecx - length
+;;; Return Val:
+;;; 
+;;; Registers Used:
+;;; Stack Depth: 9 * log(index_length)
+;;; 
+;;;;;;;;; 
+merge_sort:
+   push  esi
+   push  ecx
+   ;; clone 'index' to 'index_temp'
+   lea   edi, [index_temp]
+   shl   ecx, 1                 ; since pairs are caried
+   rep   movsd        
+   pop   ecx
+   pop   edi
+   lea   esi, [index_temp]
+
+merge_sort_rec:
+   cmp   ecx, 1
+   jg    merge_sort_big
+
+   ret
+
+merge_sort_big:
+   push  ecx
+   push  esi
+   push  edi
+   push  esi
+   push  edi
+
+   mov   eax, ecx
+   shl   eax, 3
+   add   esi, eax
+   push  esi
+   sub   esi, eax
+   shr   ecx, 1
+   mov   eax, ecx
+   shl   eax, 3
+   push  ecx
+   add   esi, eax
+   push  esi
+   push  esi
+   sub   esi, eax
+   %define stack_allocated 36
+   %define length [esp + 32]    ; passed length
+   %define orig_source [esp + 28] ; passed source ;; TODO: unused?
+   %define orig_dest [esp + 24] ; passed destination
+   %define source [esp + 20]    ; like 'orig_source', but varies during merge
+   %define dest [esp + 16]      ; like 'orig_dest', but varies during merge
+
+   %define orig_source_fin [esp + 12] ; orig_source + length
+   %define length_half [esp + 8] ; length / 2
+   %define orig_source_mid [esp + 4] ; source + length_half
+   %define source_mid [esp + 0] ; like 'orig_source_mid', but varies over time
+
+   xchg  esi, edi
+   call  merge_sort_rec
+   
+   mov   ecx, length
+   mov   edi, source
+   mov   eax, ecx
+   inc   ecx
+   mov   esi, dest
+   shr   eax, 1
+   shr   ecx, 1
+   lea   edi, [edi + 8 * eax]
+   lea   esi, [esi + 8 * eax]
+   call  merge_sort_rec
+
+   mov   esi, source            ; first half
+   mov   ebx, esi
+   mov   ecx, length_half
+   add   ebx, ecx               ; second half
+   mov   edx, dest              ; where combine to
+
+merge_sort_combine:
+   mov   esi, source
+   mov   edi, source_mid
+
+   cmp   esi, orig_source_mid
+   jge   .copy_second_half
+
+   cmp   edi, orig_source_fin
+   jge   .copy_first_half
+
+   ;; compare current elements
+   ;; TODO: assuming that all keys are different!!!
+   mov   ecx, string_max_len
+   mov   esi, [esi]
+   mov   edi, [edi]
+   repe  cmpsb
+   jg    .greater
+
+   mov   esi, source
+   mov   edi, dest
+   mov   ecx, 2
+   rep   movsd
+   mov   dest, edi
+   mov   source, esi
+   jmp   merge_sort_combine
+
+.greater:
+   mov   esi, source_mid
+   mov   edi, dest
+   mov   ecx, 2
+   rep   movsd
+   mov   dest, edi
+   mov   source_mid, esi
+   jmp   merge_sort_combine
+
+.copy_first_half:
+   mov   esi, source
+   mov   edi, dest
+   mov   ecx, orig_source_mid
+   sub   ecx, esi
+   shr   ecx, 2
+   rep   movsd
+   jmp merge_sort_combine_post
+
+.copy_second_half:
+   mov   esi, source_mid
+   mov   edi, dest
+   mov   ecx, orig_source_fin
+   sub   ecx, esi
+   shr   ecx, 2
+   rep   movsd
+
+merge_sort_combine_post:
+
+   add   esp, stack_allocated
+   %undef stack_allocated
+   %undef length
+   %undef orig_source
+   %undef orig_dest
+   %undef source
+   %undef dest
+   %undef orig_source_fin
+   %undef length_half
+   %undef orig_source_mid
+   %undef source_mid
+
+   ret
+
+;;;;;;;;; entry point
 _start:         
    ;; preparations
 
-   %define cur_line_num [esp - 4]
    sub esp, 4
 
    ;;
@@ -218,6 +380,8 @@ read_file_post:
    ;; also replace '\n' after each value with '\0' for easier build-in printing
    ;;
 
+   %define cur_line_num [esp - 4]
+
    mov   esi, strings
    mov   edi, index
    mov   dword  cur_line_num, 1
@@ -290,14 +454,21 @@ mark_index_3_zero:
 
 mark_index_post:
 
+   %undef cur_line_num
+   %define index_length [esp - 4]
+
    ;; count index length (number of pairs)
-   add   edi, 4
    sub   edi, index
    shr   edi, 3
+   mov   index_length, edi
 
    ;;
    ;; merge sort
    ;;
+
+   mov   ecx, edi
+   mov   esi, index
+   call  merge_sort
 
    ;;
    ;; exit
