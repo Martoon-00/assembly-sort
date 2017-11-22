@@ -79,6 +79,12 @@ mark_index_3_table:
    ;; errors
    alloc_msg err_open_failed, "Failed to open input file", 10
    alloc_msg err_open_failed_nofile, "File doesn't exist: "
+
+   alloc_msg err_read_file_is_dir, " shouldn't be directory", 10
+   alloc_msg err_read_io, "read: io exception", 10
+   alloc_msg err_read_int, "read: interrupted", 10
+   alloc_msg err_read_unknown, "read: some error", 10
+
    alloc_msg err_no_spaces_in_line, "No space found in line "
    alloc_msg err_two_spaces_in_line, "More than one space detected on line "
    alloc_msg err_line_ends_unexpectedly, "Unexpected end of line "
@@ -177,8 +183,25 @@ read_file_success:
    jmp   read_file_strings
 
 read_file_error:
-   ;; TODO: cases, print error
-   jmp program_exit
+   cmp   eax, 21                ; file is directory
+   jnz   read_file_error_dir
+   cmp   eax, 5                 ; I/O error
+   jnz   read_file_error_io
+   cmp   eax, 4                 ; caugh interrupt
+   jnz   read_file_error_int
+
+   print_msg err_read_unknown
+   jmp   program_exit
+read_file_error_dir:
+   print_msg input_filename_msg
+   print_msg err_read_file_is_dir
+   jmp   program_exit
+read_file_error_io:
+   print_msg err_read_io
+   jmp   program_exit
+read_file_error_int:
+   print_msg err_read_int
+   jmp   program_exit
 
 read_file_post:
 
