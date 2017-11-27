@@ -35,7 +35,7 @@
    section .bss
    ;; all read data, separated with '\0'
    strings resb 1000            ;TODO: unlimited
-   ;; pairs (key_address, value_address) for strings read from file
+   ;; pairs (key_address, key_len, value_address, value_len) for strings read from file
    index resq 100
    ;; helper buffer for merge sort
    index_temp resq 100          ; TODO: get off!
@@ -161,7 +161,7 @@ print_num:
 ;;; Args:
 ;;;   %esi - unsorted index
 ;;;   %ecx - length
-;;; Return Val:
+;;; Return Val: none
 ;;; 
 ;;; Registers Used:
 ;;; Stack Depth: 9 * log(index_length)
@@ -172,12 +172,16 @@ merge_sort:
    push  ecx
    ;; clone 'index' to 'index_temp'
    lea   edi, [index_temp]
-   shl   ecx, 1                 ; since pairs are caried
+   shl   ecx, 2                 ; since each index entry is 4 dword addresses
    rep   movsd        
    pop   ecx
    pop   edi
    lea   esi, [index_temp]
 
+;;; Arguments for recursive version:
+;;;   %esi - temp storage for index
+;;;   %edi - where to store sorted index
+;;;   %ecx - length of sorted part
 merge_sort_rec:
    cmp   ecx, 1
    jg    merge_sort_big
@@ -192,13 +196,13 @@ merge_sort_big:
    push  edi
 
    mov   eax, ecx
-   shl   eax, 3
+   shl   eax, 4
    add   esi, eax
    push  esi
    sub   esi, eax
    shr   ecx, 1
    mov   eax, ecx
-   shl   eax, 3
+   shl   eax, 4
    push  ecx
    add   esi, eax
    push  esi
@@ -217,6 +221,7 @@ merge_sort_big:
    %define source_mid [esp + 0] ; like 'orig_source_mid', but varies over time
 
    xchg  esi, edi
+   ;; $ecx initialized
    call  merge_sort_rec
    
    mov   ecx, length
@@ -226,8 +231,9 @@ merge_sort_big:
    mov   esi, dest
    shr   eax, 1
    shr   ecx, 1
-   lea   edi, [edi + 8 * eax]
-   lea   esi, [esi + 8 * eax]
+   shl   eax, 4
+   lea   edi, [edi + eax]
+   lea   esi, [esi + eax]
    call  merge_sort_rec
 
    mov   esi, source            ; first half
@@ -248,15 +254,23 @@ merge_sort_combine:
 
    ;; compare current elements
    ;; TODO: assuming that all keys are different!!!
-   mov   ecx, string_max_len
+   ;; first compare lengths
+   mov   ecx, [esi + 4]
+   cmp   ecx, [edi + 4]
+   jg    .greater
+   jl    .lesser
+
+   ;; then compare content
    mov   esi, [esi]
    mov   edi, [edi]
+   ;; ecx initialized
    repe  cmpsb
    jg    .greater
 
+.lesser:
    mov   esi, source
    mov   edi, dest
-   mov   ecx, 2
+   mov   ecx, 4
    rep   movsd
    mov   dest, edi
    mov   source, esi
@@ -265,7 +279,7 @@ merge_sort_combine:
 .greater:
    mov   esi, source_mid
    mov   edi, dest
-   mov   ecx, 2
+   mov   ecx, 4
    rep   movsd
    mov   dest, edi
    mov   source_mid, esi
@@ -367,7 +381,7 @@ read_file_error:
    jnz   read_file_error_dir
    cmp   eax, 5                 ; I/O error
    jnz   read_file_error_io
-   cmp   eax, 4                 ; caugh interrupt
+   cmp   eax, 4                 ; caught interrupt
    jnz   read_file_error_int
 
    print_msg err_read_unknown
@@ -400,12 +414,14 @@ read_file_post:
 
    %define cur_line_num [esp + 4]
 
-   mov   esi, strings
-   mov   edi, index
+   ;; init
+   mov   esi, strings           ;; pointer to current element in 'string'
+   mov   edi, index             ;; pointer to current element in 'index'
    mov   dword  cur_line_num, 1
 
+   ;; init first elem of index
    mov   [edi], esi
-   add   edi, 4
+   add   edi, 8
 
    %macro print_msg_with_line_num 1
    print_msg %1
@@ -420,17 +436,21 @@ read_file_post:
    ;; in order to skip empty lines.
    ;; thus 3 stages are present:
 mark_index:
+   mov   ecx, -1                ;; current length of current string
+
 mark_index_1:
+   inc   ecx
    lodsb                        ; same as "mov al, [esi]; inc esi"
    jmp   [mark_index_1_table + 4 * eax]
 
 mark_index_1_space:             ;; TODO: is it ok to have "" as key? as value?
-   mov   [edi], esi  
-   add   edi, 4
-   jmp   mark_index_3
+   mov   [edi], esi
+   mov   [edi - 4], ecx
+   add   edi, 8
+   jmp   mark_index_mid
 mark_index_1_cr:
 mark_index_1_lf:
-   inc   dword [edi - 4]        ; correct last set index value to point to
+   inc   dword [edi - 8]        ; correct last set index value to point to
                                 ; start of next line rather than this line
    inc   dword cur_line_num
    jmp mark_index
@@ -438,13 +458,15 @@ mark_index_1_zero:
    jmp mark_index_post
 
 mark_index_2:
+   inc   ecx
    lodsb
    jmp   [mark_index_2_table + 4 * eax]
 
 mark_index_2_space:
    mov   [edi], esi
-   add   edi, 4
-   jmp   mark_index_3
+   mov   [edi - 4], ecx
+   add   edi, 8
+   jmp   mark_index_mid
 mark_index_2_cr:
 mark_index_2_lf:
    print_msg_with_line_num err_no_spaces_in_line
@@ -453,14 +475,19 @@ mark_index_2_zero:
    print_msg_with_line_num err_line_ends_unexpectedly
    jmp program_exit
 
+mark_index_mid:
+   mov   ecx, -1
+
 mark_index_3:
+   inc   ecx
    lodsb
    jmp   [mark_index_3_table + 4 * eax]
 
 mark_index_3_cr:
 mark_index_3_lf:
    mov   [edi], esi
-   add   edi, 4
+   mov   [edi - 4], ecx
+   add   edi, 8
    mov   byte   [esi - 1], 0    ;; terminate value-string with '\0'
    inc   dword cur_line_num
    jmp   mark_index
@@ -468,6 +495,7 @@ mark_index_3_space:
    print_msg_with_line_num err_two_spaces_in_line
    jmp program_exit
 mark_index_3_zero:
+   mov   [edi - 4], ecx
    jmp mark_index_post
 
 mark_index_post:
@@ -475,9 +503,9 @@ mark_index_post:
    %undef cur_line_num
    %define index_length [esp + 4]
 
-   ;; count index length (number of pairs)
+   ;; count index length (number of key-value entries)
    sub   edi, index
-   shr   edi, 3
+   shr   edi, 4
    mov   index_length, edi
 
    ;;
@@ -535,17 +563,18 @@ interact_read_lf:
    ;;         m = (l + r) / 2
    ;;         if (x < a[m]) r = m
    ;;         else l = m
+   ;;
    ;;     if (l != -1 && a[l] == x) found
    ;;     else not_found
    ;;
    ;; with only difference that I store &a[l] and r - l instead of bounds
 
    ;; init
-   ;; reminder: %ebx always changes on multiple of 8,
-   ;; because it is reference to (key, value) pair of addresses in index
-   lea   ebx, [index - 8]
+   ;; reminder: %ebx always changes on multiple of 16,
+   ;; because it is reference to (key, key_len, value, value_len) in index
+   lea   ebx, [index - 16]      ;; &a[l]
    mov   edx, index_length
-   inc   edx
+   inc   edx                    ;; r - l
 
 bin_search_loop:
    ;; whether end?
@@ -557,28 +586,48 @@ bin_search_loop:
    shr   eax, 1
 
    ;; compare strings
+   mov   ecx, eax               ;; index offset
+   shl   ecx, 4
+
+   ;; first compare lengths
+   mov   esi, query_length
+   cmp   esi, [ebx + ecx + 4]
+   jg    .greater
+   jl    .lesser
+
+   ;; if equal, compare chars
    mov   esi, interact_read_buffer
-   mov   edi, [ebx + 8 * eax]
+   mov   edi, [ebx + ecx]
    mov   ecx, query_length
    repe  cmpsb
    jge   .greater
 
+.lesser:
    ;; query is greater than middle key
    mov   edx, eax
    jmp   bin_search_loop
 
 .greater:
    ;; query is lesser
-   lea   ebx, [ebx + 8 * eax]
+   mov   ecx, eax
+   shl   ecx, 4
+   lea   ebx, [ebx + ecx]
    sub   edx, eax
    jmp   bin_search_loop
 
 bin_search_loop_post:
 
    ;; final comparisons
+   ;; l == -1 ?
    cmp   ebx, index
    jl    bin_search_not_found
 
+   ;; compare lengths
+   mov   esi, query_length
+   cmp   esi, [ebx + 4]
+   jne   bin_search_not_found
+
+   ;; compare content
    mov   esi, [ebx]
    mov   edi, interact_read_buffer
    mov   ecx, query_length
@@ -593,9 +642,9 @@ bin_search_not_found:
 bin_search_found:
    ;; print value
    mov   eax, 4                 ; write
-   mov   ecx, [ebx + 4]         ; value in index
+   mov   ecx, [ebx + 8]         ; value in index
+   mov   edx, [ebx + 12]        ; length of value in index
    mov   ebx, 1                 ; to stdout
-   mov   edx, 300
    int   0x80
 
    print_msg newline
