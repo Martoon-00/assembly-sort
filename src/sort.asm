@@ -30,6 +30,7 @@
    ;;
    ;;
 
+   %define string_max_len 256
 
    section .bss
    ;; all read data, separated with '\0'
@@ -40,6 +41,8 @@
    index_temp resq 100          ; TODO: get off!
    ;; temporal storage for 'print_num' functions
    print_num_buffer resb 11
+   ;; buffer used to accept user queries
+   interact_read_buffer resb string_max_len + 1
 
 
    section .data
@@ -80,6 +83,16 @@ mark_index_3_table:
       dd    mark_index_3_space, 
       times 223 dd mark_index_3
 
+interact_read_table:             
+      dd    interact_read_zero,
+      times 9 dd interact_read,
+      dd    interact_read_cr, 
+      times 2 dd interact_read,
+      dd    interact_read_lf, 
+      times 18 dd interact_read,
+      dd    interact_read_space, 
+      times 223 dd interact_read
+
    ;; errors
    alloc_msg err_open_failed, "Failed to open input file", 10
    alloc_msg err_open_failed_nofile, "File doesn't exist: "
@@ -93,6 +106,8 @@ mark_index_3_table:
    alloc_msg err_two_spaces_in_line, "More than one space detected on line "
    alloc_msg err_line_ends_unexpectedly, "Unexpected end of line "
 
+   alloc_msg err_unexpected_space_in_query, "Unexpected space in query", 10
+   alloc_msg err_key_not_found, "Key not found", 10
 
    ;;
    ;;
@@ -293,7 +308,10 @@ merge_sort_combine_post:
 _start:         
    ;; preparations
 
-   sub esp, 4
+   %define stack_allocated 8
+   sub esp, stack_allocated
+
+   cld                          ;; clear direction flag
 
    ;;
    ;; read all strings from a file
@@ -380,7 +398,7 @@ read_file_post:
    ;; also replace '\n' after each value with '\0' for easier build-in printing
    ;;
 
-   %define cur_line_num [esp - 4]
+   %define cur_line_num [esp + 4]
 
    mov   esi, strings
    mov   edi, index
@@ -455,7 +473,7 @@ mark_index_3_zero:
 mark_index_post:
 
    %undef cur_line_num
-   %define index_length [esp - 4]
+   %define index_length [esp + 4]
 
    ;; count index length (number of pairs)
    sub   edi, index
@@ -471,12 +489,129 @@ mark_index_post:
    call  merge_sort
 
    ;;
+   ;; serve queries
+   ;;
+
+interact:
+
+   ;; read query
+
+   mov esi, interact_read_buffer
+interact_read:
+   ;; TODO: try reading many bytes at once
+   ;; TODO: do smth with empty lines
+   mov   eax, 3                 ; read
+   mov   ebx, 0                 ; from stdin
+   mov   ecx, esi               ; to buffer
+   mov   edx, 1                 ; only 1 byte
+   int   0x80
+
+   lodsb
+   jmp   [interact_read_table + 4 * eax]
+
+interact_read_space:
+   print_msg err_unexpected_space_in_query
+   jmp   interact
+
+interact_read_zero:
+   jmp   program_exit
+
+interact_read_cr:
+interact_read_lf:
+
+   ;; TODO: is +0 correct?
+   %define query_length [esp + 0]
+   lea   eax, [interact_read_buffer]
+   sub   esi, eax
+   dec   esi
+   mov   query_length, esi
+
+   ;; binary search
+   ;;
+   ;; Pseudo code:
+   ;;     l = -1
+   ;;     r = a.length
+   ;;     while (l + 1 != r)
+   ;;         m = (l + r) / 2
+   ;;         if (x < a[m]) r = m
+   ;;         else l = m
+   ;;     if (l != -1 && a[l] == x) found
+   ;;     else not_found
+   ;;
+   ;; with only difference that I store &a[l] and r - l instead of bounds
+
+   ;; init
+   ;; reminder: %ebx always changes on multiple of 8,
+   ;; because it is reference to (key, value) pair of addresses in index
+   lea   ebx, [index - 8]
+   mov   edx, index_length
+   inc   edx
+
+bin_search_loop:
+   ;; whether end?
+   cmp   edx, 1
+   jle   bin_search_loop_post
+
+   ;; count middle
+   mov   eax, edx
+   shr   eax, 1
+
+   ;; compare strings
+   mov   esi, interact_read_buffer
+   mov   edi, [ebx + 8 * eax]
+   mov   ecx, query_length
+   repe  cmpsb
+   jge   .greater
+
+   ;; query is greater than middle key
+   mov   edx, eax
+   jmp   bin_search_loop
+
+.greater:
+   ;; query is lesser
+   lea   ebx, [ebx + 8 * eax]
+   sub   edx, eax
+   jmp   bin_search_loop
+
+bin_search_loop_post:
+
+   ;; final comparisons
+   cmp   ebx, index
+   jl    bin_search_not_found
+
+   mov   esi, [ebx]
+   mov   edi, interact_read_buffer
+   mov   ecx, query_length
+   repe  cmpsb
+   je    bin_search_found
+
+bin_search_not_found:
+   ;; print error
+   print_msg err_key_not_found
+   jmp   interact
+
+bin_search_found:
+   ;; print value
+   mov   eax, 4                 ; write
+   mov   ecx, [ebx + 4]         ; value in index
+   mov   ebx, 1                 ; to stdout
+   mov   edx, 300
+   int   0x80
+
+   print_msg newline
+
+   jmp interact
+   %undef query_length
+
+   ;;
    ;; exit
    ;;
 
 program_exit:
+   add   esp, stack_allocated
+   %undef stack_allocated
+
    mov   eax, 1                 ; exit program
    xor   ebx, ebx               ; exit code 0
    int   0x80        
-
 
