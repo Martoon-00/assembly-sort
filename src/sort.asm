@@ -84,8 +84,7 @@ mark_index_3_table:
       times 223 dd mark_index_3
 
 interact_read_table:             
-      dd    interact_read_zero,
-      times 9 dd interact_read,
+      times 10 dd interact_read,
       dd    interact_read_cr, 
       times 2 dd interact_read,
       dd    interact_read_lf, 
@@ -534,6 +533,9 @@ interact_read:
    mov   edx, 1                 ; only 1 byte
    int   0x80
 
+   test  eax, eax
+   jz    program_exit
+
    lodsb
    jmp   [interact_read_table + 4 * eax]
 
@@ -541,13 +543,9 @@ interact_read_space:
    print_msg err_unexpected_space_in_query
    jmp   interact
 
-interact_read_zero:
-   jmp   program_exit
-
 interact_read_cr:
 interact_read_lf:
 
-   ;; TODO: is +0 correct?
    %define query_length [esp + 0]
    lea   eax, [interact_read_buffer]
    sub   esi, eax
