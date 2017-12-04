@@ -227,7 +227,6 @@ merge_sort_rec:
 
 merge_sort_big:
    push  ecx
-   push  esi
    push  edi
    push  esi
    push  edi
@@ -245,11 +244,10 @@ merge_sort_big:
    push  esi
    push  esi
    sub   esi, eax
-   %define stack_allocated 36
-   %define length [esp + 32]    ; passed length
-   %define orig_source [esp + 28] ; passed source ;; TODO: unused?
+   %define stack_allocated 32
+   %define length [esp + 28]    ; passed length
    %define orig_dest [esp + 24] ; passed destination
-   %define source [esp + 20]    ; like 'orig_source', but varies during merge
+   %define source [esp + 20]    ; passed source
    %define dest [esp + 16]      ; like 'orig_dest', but varies during merge
 
    %define orig_source_fin [esp + 12] ; orig_source + length
@@ -344,7 +342,6 @@ merge_sort_combine_post:
    add   esp, stack_allocated
    %undef stack_allocated
    %undef length
-   %undef orig_source
    %undef orig_dest
    %undef source
    %undef dest
