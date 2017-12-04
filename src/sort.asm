@@ -51,6 +51,19 @@
 %%skip_alloc:
    %endmacro
 
+   ;; fill char jump table
+   ;; specify %1 as base name for jump table and labels to jump to
+   %macro init_char_table 1
+   mov   ecx, 256
+   mov   edi, %1_table
+   mov   eax, %1_plain_char
+   rep   stosd
+
+   mov   dword [%1_table + 4 * 32], %1_space
+   mov   dword [%1_table + 4 * 10], %1_ln
+   mov   dword [%1_table + 4 * 13], %1_ln
+   %endmacro
+
    ;; Shorcut for ensure_mem_with
    %macro ensure_mem 1
    ensure_mem_with %1, PAGE_SIZE
@@ -74,7 +87,11 @@
    print_num_buffer resb 11
    ;; buffer used to accept user queries
    interact_read_buffer resb string_max_len + 1
-
+   ;; jump tables
+   mark_index_1_table resd 256
+   mark_index_2_table resd 256
+   mark_index_3_table resd 256
+   interact_read_table resd 256
 
    section .data
    ;; predefined filename with input
@@ -85,40 +102,6 @@
    ;; for 'print_num'
    print_num_buffer_len dd 10
 
-   ;; transaction table for marking up read data
-mark_index_1_table:             ; TODO: generate?
-      times 10 dd mark_index_2,
-      dd    mark_index_1_cr, 
-      times 2 dd mark_index_2,
-      dd    mark_index_1_lf, 
-      times 18 dd mark_index_2,
-      dd    mark_index_1_space, 
-      times 223 dd mark_index_2
-mark_index_2_table:             
-      times 10 dd mark_index_2,
-      dd    mark_index_2_cr, 
-      times 2 dd mark_index_2,
-      dd    mark_index_2_lf, 
-      times 18 dd mark_index_2,
-      dd    mark_index_2_space,
-      times 223 dd mark_index_2
-mark_index_3_table:             
-      times 10 dd mark_index_3,
-      dd    mark_index_3_cr, 
-      times 2 dd mark_index_3,
-      dd    mark_index_3_lf, 
-      times 18 dd mark_index_3,
-      dd    mark_index_3_space, 
-      times 223 dd mark_index_3
-
-interact_read_table:             
-      times 10 dd interact_read,
-      dd    interact_read_cr, 
-      times 2 dd interact_read,
-      dd    interact_read_lf, 
-      times 18 dd interact_read,
-      dd    interact_read_space, 
-      times 223 dd interact_read
 
    ;; errors
    alloc_msg err_open_failed, "Failed to open input file", 10
@@ -357,6 +340,11 @@ _start:
 
    cld                          ;; clear direction flag
 
+   init_char_table mark_index_1
+   init_char_table mark_index_2
+   init_char_table mark_index_3
+   init_char_table interact_read
+
    ;;
    ;; read all strings from a file
    ;;
@@ -495,8 +483,7 @@ mark_index_1_space:             ;; TODO: is it ok to have "" as key? as value?
    mov   [edi - 4], ecx
    add   edi, 8
    jmp   mark_index_mid
-mark_index_1_cr:
-mark_index_1_lf:
+mark_index_1_ln:
    inc   dword [edi - 8]        ; correct last set index value to point to
                                 ; start of next line rather than this line
    inc   dword cur_line_num
@@ -507,6 +494,8 @@ mark_index_1_lf:
 
    jmp mark_index
 
+mark_index_1_plain_char:
+mark_index_2_plain_char:
 mark_index_2:
    inc   ecx
    lodsb
@@ -517,21 +506,20 @@ mark_index_2_space:
    mov   [edi - 4], ecx
    add   edi, 8
    jmp   mark_index_mid
-mark_index_2_cr:
-mark_index_2_lf:
+mark_index_2_ln:
    print_msg_with_line_num err_no_spaces_in_line
    jmp program_exit
 
 mark_index_mid:
    mov   ecx, -1
 
+mark_index_3_plain_char:
 mark_index_3:
    inc   ecx
    lodsb
    jmp   [mark_index_3_table + 4 * eax]
 
-mark_index_3_cr:
-mark_index_3_lf:
+mark_index_3_ln:
    mov   [edi], esi
    mov   [edi - 4], ecx
    add   edi, 8
@@ -581,6 +569,7 @@ interact:
   
    ;; read query
    mov esi, interact_read_buffer
+interact_read_plain_char:
 interact_read:
    ;; TODO: try reading many bytes at once
    mov   eax, 3                 ; read
@@ -603,8 +592,7 @@ interact_read_space:
 interact_read_last_query:
    mov   dword  is_last_query, 1
    inc   esi                    ;; imagine '\n' was in the end
-interact_read_cr:
-interact_read_lf:
+interact_read_ln:
 
    ;; count query length, loop if 0
    %define query_length [esp + 0]
