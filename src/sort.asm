@@ -22,7 +22,44 @@
 %1_len equ $ - %1
    %endmacro 
 
+   ;; Sets %edi to the end of heap, in fact initiates new dynamic storage.
+   ;; Wastes %eax and %ebx like sys_brk() call.
+   %macro start_new_mem 0
+   mov   eax, 45                ;; sys_brk
+   xor   ebx, ebx               ;; just get current heap end
+   int   0x80
+   
+   mov   edi, eax
+   %endmacro
+
+   ;; Ensures that at least %1 bytes in front of %edi are allocated memory.
+   ;; Allocates %2 bytes if more memory is needed.
+   ;; Wastes %eax and %ebx like sys_brk() call.
+   %macro ensure_mem_with 2
+   mov   eax, 45                ;; sys_brk
+   xor   ebx, ebx               ;; just get current heap end
+   int   0x80 
+
+   mov   ebx, eax
+   sub   ebx, %1
+   sub   ebx, edi
+   ja    .skip_alloc            ;; e?
+
+   lea   ebx, [eax + %2] ;; move heap end on PAGE_SIZE
+   mov   eax, 45                ;; sys_brk
+   int   0x80
+.skip_alloc:
+   %endmacro
+
+   ;; Shorcut for ensure_mem_with
+   %macro ensure_mem 1
+   ensure_mem_with %1, PAGE_SIZE
+   %endmacro
+ 
+   ;; Maximal string length which could be passed.
    %define string_max_len 0x100
+   ;; How much memory allocate per time.
+   %define PAGE_SIZE 0x1000
 
    ;;
    ;;
@@ -33,12 +70,6 @@
    %define string_max_len 256
 
    section .bss
-   ;; all read data, separated with '\0'
-   strings resb 1000            ;TODO: unlimited
-   ;; pairs (key_address, key_len, value_address, value_len) for strings read from file
-   index resq 100
-   ;; helper buffer for merge sort
-   index_temp resq 100          ; TODO: get off!
    ;; temporal storage for 'print_num' functions
    print_num_buffer resb 11
    ;; buffer used to accept user queries
@@ -162,20 +193,27 @@ print_num:
 ;;;   %ecx - length
 ;;; Return Val: none
 ;;; 
-;;; Registers Used:
+;;; Registers Used: all
 ;;; Stack Depth: 9 * log(index_length)
 ;;; 
 ;;;;;;;;; 
 merge_sort:
    push  esi
    push  ecx
+
    ;; clone 'index' to 'index_temp'
-   lea   edi, [index_temp]
-   shl   ecx, 2                 ; since each index entry is 4 dword addresses
+   start_new_mem
+   push  edi
+
+   shl   ecx, 4                 ; length is given in quadruples of dword addresses
+                                ; converting to bytes
+   ensure_mem_with ecx, ecx
+
+   shr   ecx, 2                 ; quadruples of dwords to dwords
    rep   movsd        
+   pop   esi
    pop   ecx
    pop   edi
-   lea   esi, [index_temp]
 
 ;;; Arguments for recursive version:
 ;;;   %esi - temp storage for index
@@ -321,8 +359,8 @@ merge_sort_combine_post:
 _start:         
    ;; preparations
 
-   %define stack_allocated 8
-   sub esp, stack_allocated
+   %define stack_allocated 16
+   sub   esp, stack_allocated
 
    cld                          ;; clear direction flag
 
@@ -338,7 +376,7 @@ _start:
    int   0x80
 
    cmp   eax, 0
-   jge open_file_success
+   jge   open_file_success
 
    ;; opening failed
    cmp   eax, -2
@@ -357,13 +395,21 @@ open_file_success:
 
    ;; read from file to 'strings'
 
-   mov   edi, strings           
+   %define strings [esp + 8]    ;; data read from file
+
+   ;; init storage for data from file
+   start_new_mem
+   mov   strings, edi
 
 read_file_strings:
+   ;; allocate more space if needed
+   ensure_mem PAGE_SIZE
+
+   ;; perform read
    mov   eax, 3                 ; read
    mov   ebx, esi               ; from opened file
    mov   ecx, edi               ; to buffer
-   mov   edx, 0x1000            ; up to 4Kb chars per read
+   mov   edx, PAGE_SIZE         ; up to PAGE_SIZE chars per read
    int   0x80
 
    cmp   eax, 0
@@ -377,11 +423,11 @@ read_file_success:
 
 read_file_error:
    cmp   eax, 21                ; file is directory
-   jnz   read_file_error_dir
+   jz    read_file_error_dir
    cmp   eax, 5                 ; I/O error
-   jnz   read_file_error_io
+   jz    read_file_error_io
    cmp   eax, 4                 ; caught interrupt
-   jnz   read_file_error_int
+   jz    read_file_error_int
 
    print_msg err_read_unknown
    jmp   program_exit
@@ -399,7 +445,6 @@ read_file_error_int:
 read_file_post:
 
    ;; close file
-
    mov   eax, 6                 ; close file
    mov   ebx, esi
    int   0x80
@@ -408,17 +453,23 @@ read_file_post:
    ;; mark up the index
    ;;
    ;; process 'strings' and initialize index
-   ;; also replace '\n' after each value with '\0' for easier build-in printing
+   ;; index is array of (key_addr, key_len, value_addr, value_len),
+   ;; thus each element of this array uses 16 bytes.
+   ;;
+   ;; I also replace '\n' after each value with '\0' for easier build-in printing ;; TODO:
    ;;
 
    %define cur_line_num [esp + 4]
+   %define index [esp + 12]     ;; index
 
    ;; init
    mov   esi, strings           ;; pointer to current element in 'string'
-   mov   edi, index             ;; pointer to current element in 'index'
+   start_new_mem 
+   mov   index, edi
    mov   dword  cur_line_num, 1
 
    ;; init first elem of index
+   ensure_mem 16
    mov   [edi], esi
    add   edi, 8
 
@@ -436,6 +487,7 @@ read_file_post:
    ;; thus 3 stages are present:
 mark_index:
    mov   ecx, -1                ;; current length of current string
+   xor   eax, eax               ;; keep %eax = %al
 
 mark_index_1:
    inc   ecx
@@ -489,6 +541,10 @@ mark_index_3_lf:
    add   edi, 8
    mov   byte   [esi - 1], 0    ;; terminate value-string with '\0'
    inc   dword cur_line_num
+
+   ;; allocate more memory if needed
+   ensure_mem 16
+
    jmp   mark_index
 mark_index_3_space:
    print_msg_with_line_num err_two_spaces_in_line
@@ -536,6 +592,7 @@ interact_read:
    test  eax, eax
    jz    program_exit
 
+   xor   eax, eax
    lodsb
    jmp   [interact_read_table + 4 * eax]
 
@@ -570,7 +627,8 @@ interact_read_lf:
    ;; init
    ;; reminder: %ebx always changes on multiple of 16,
    ;; because it is reference to (key, key_len, value, value_len) in index
-   lea   ebx, [index - 16]      ;; &a[l]
+   mov   ebx, index
+   lea   ebx, [ebx - 16]      ;; &a[l]
    mov   edx, index_length
    inc   edx                    ;; r - l
 
@@ -598,7 +656,7 @@ bin_search_loop:
    mov   edi, [ebx + ecx]
    mov   ecx, query_length
    repe  cmpsb
-   jge   .greater
+   jge   .greater               ;; TODO: jae? and further
 
 .lesser:
    ;; query is greater than middle key
@@ -655,6 +713,9 @@ bin_search_found:
    ;;
 
 program_exit:
+   %undef strings
+   %undef index
+
    add   esp, stack_allocated
    %undef stack_allocated
 
