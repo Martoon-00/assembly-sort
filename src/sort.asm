@@ -352,7 +352,7 @@ merge_sort_combine_post:
 _start:         
    ;; preparations
 
-   %define stack_allocated 16
+   %define stack_allocated 20
    sub   esp, stack_allocated
 
    cld                          ;; clear direction flag
@@ -452,8 +452,8 @@ read_file_post:
    ;; thus each element of this array uses 16 bytes.
    ;;
 
-   %define cur_line_num [esp + 4] ;; currently processing line of file
    %define strings_fin [esp + 0] ;; last symbol in 'strings'
+   %define cur_line_num [esp + 4] ;; currently processing line of file
    %define index [esp + 12]     ;; index
 
    ;; init
@@ -572,14 +572,17 @@ mark_index_post:
    ;; serve queries
    ;;
 
+   %define is_last_query [esp + 20]
+   mov   dword  is_last_query, 0
+ 
 interact:
-
+   cmp   dword  is_last_query, 0
+   jnz   interact_post
+  
    ;; read query
-
    mov esi, interact_read_buffer
 interact_read:
    ;; TODO: try reading many bytes at once
-   ;; TODO: do smth with empty lines
    mov   eax, 3                 ; read
    mov   ebx, 0                 ; from stdin
    mov   ecx, esi               ; to buffer
@@ -587,7 +590,7 @@ interact_read:
    int   0x80
 
    test  eax, eax
-   jz    program_exit
+   jz    interact_read_last_query
 
    xor   eax, eax
    lodsb
@@ -597,13 +600,19 @@ interact_read_space:
    print_msg err_unexpected_space_in_query
    jmp   interact
 
+interact_read_last_query:
+   mov   dword  is_last_query, 1
+   inc   esi                    ;; imagine '\n' was in the end
 interact_read_cr:
 interact_read_lf:
 
+   ;; count query length, loop if 0
    %define query_length [esp + 0]
    lea   eax, [interact_read_buffer]
    sub   esi, eax
-   dec   esi
+   sub   esi, 1
+   jz    interact
+
    mov   query_length, esi
 
    ;; binary search
@@ -701,8 +710,10 @@ bin_search_found:
    mov   ebx, 1                 ; to stdout
    int   0x80
 
-   jmp interact
    %undef query_length
+
+   jmp   interact
+interact_post:
 
    ;;
    ;; exit
