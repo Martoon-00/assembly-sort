@@ -300,7 +300,7 @@ merge_sort_combine:
    mov   edi, [edi]
    ;; ecx initialized
    repe  cmpsb
-   jg    .greater
+   ja    .greater
 
 .lesser:
    mov   esi, source
@@ -650,7 +650,7 @@ bin_search_loop:
    mov   edi, [ebx + ecx]
    mov   ecx, query_length
    repe  cmpsb
-   jge   .greater               ;; TODO: jae? and further
+   jae   .greater               ;; TODO: jae? and further
 
 .lesser:
    ;; query is greater than middle key
