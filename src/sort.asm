@@ -453,8 +453,6 @@ read_file_post:
    ;; index is array of (key_addr, key_len, value_addr, value_len),
    ;; thus each element of this array uses 16 bytes.
    ;;
-   ;; I also replace '\n' after each value with '\0' for easier build-in printing ;; TODO:
-   ;;
 
    %define cur_line_num [esp + 4]
    %define index [esp + 12]     ;; index
@@ -536,7 +534,6 @@ mark_index_3_lf:
    mov   [edi], esi
    mov   [edi - 4], ecx
    add   edi, 8
-   mov   byte   [esi - 1], 0    ;; terminate value-string with '\0'
    inc   dword cur_line_num
 
    ;; allocate more memory if needed
@@ -697,10 +694,9 @@ bin_search_found:
    mov   eax, 4                 ; write
    mov   ecx, [ebx + 8]         ; value in index
    mov   edx, [ebx + 12]        ; length of value in index
+   inc   edx                    ; including newline
    mov   ebx, 1                 ; to stdout
    int   0x80
-
-   print_msg newline
 
    jmp interact
    %undef query_length
