@@ -43,12 +43,12 @@
    mov   ebx, eax
    sub   ebx, %1
    sub   ebx, edi
-   ja    .skip_alloc            ;; e?
+   jge   %%skip_alloc
 
    lea   ebx, [eax + %2] ;; move heap end on PAGE_SIZE
    mov   eax, 45                ;; sys_brk
    int   0x80
-.skip_alloc:
+%%skip_alloc:
    %endmacro
 
    ;; Shorcut for ensure_mem_with
@@ -87,8 +87,7 @@
 
    ;; transaction table for marking up read data
 mark_index_1_table:             ; TODO: generate?
-      dd    mark_index_1_zero,
-      times 9 dd mark_index_2,
+      times 10 dd mark_index_2,
       dd    mark_index_1_cr, 
       times 2 dd mark_index_2,
       dd    mark_index_1_lf, 
@@ -96,8 +95,7 @@ mark_index_1_table:             ; TODO: generate?
       dd    mark_index_1_space, 
       times 223 dd mark_index_2
 mark_index_2_table:             
-      dd    mark_index_2_zero,
-      times 9 dd mark_index_2,
+      times 10 dd mark_index_2,
       dd    mark_index_2_cr, 
       times 2 dd mark_index_2,
       dd    mark_index_2_lf, 
@@ -105,8 +103,7 @@ mark_index_2_table:
       dd    mark_index_2_space,
       times 223 dd mark_index_2
 mark_index_3_table:             
-      dd    mark_index_3_zero,
-      times 9 dd mark_index_3,
+      times 10 dd mark_index_3,
       dd    mark_index_3_cr, 
       times 2 dd mark_index_3,
       dd    mark_index_3_lf, 
@@ -134,7 +131,6 @@ interact_read_table:
 
    alloc_msg err_no_spaces_in_line, "No space found in line "
    alloc_msg err_two_spaces_in_line, "More than one space detected on line "
-   alloc_msg err_line_ends_unexpectedly, "Unexpected end of line "
 
    alloc_msg err_unexpected_space_in_query, "Unexpected space in query", 10
    alloc_msg err_key_not_found, "Key not found", 10
@@ -440,6 +436,8 @@ read_file_error_int:
    jmp   program_exit
 
 read_file_post:
+   ensure_mem 1
+   mov   byte [edi], 10         ;; in case there were no newline at end
 
    ;; close file
    mov   eax, 6                 ; close file
@@ -454,12 +452,15 @@ read_file_post:
    ;; thus each element of this array uses 16 bytes.
    ;;
 
-   %define cur_line_num [esp + 4]
+   %define cur_line_num [esp + 4] ;; currently processing line of file
+   %define strings_fin [esp + 0] ;; last symbol in 'strings'
    %define index [esp + 12]     ;; index
 
    ;; init
+   mov   strings_fin, edi
+   dec   edi
    mov   esi, strings           ;; pointer to current element in 'string'
-   start_new_mem 
+   start_new_mem                ;; %edi will point to being-built element in index
    mov   index, edi
    mov   dword  cur_line_num, 1
 
@@ -499,9 +500,12 @@ mark_index_1_lf:
    inc   dword [edi - 8]        ; correct last set index value to point to
                                 ; start of next line rather than this line
    inc   dword cur_line_num
+
+   ;; whether end?
+   cmp   esi, strings_fin
+   jae   mark_index_post
+
    jmp mark_index
-mark_index_1_zero:
-   jmp mark_index_post
 
 mark_index_2:
    inc   ecx
@@ -516,9 +520,6 @@ mark_index_2_space:
 mark_index_2_cr:
 mark_index_2_lf:
    print_msg_with_line_num err_no_spaces_in_line
-   jmp program_exit
-mark_index_2_zero:
-   print_msg_with_line_num err_line_ends_unexpectedly
    jmp program_exit
 
 mark_index_mid:
@@ -536,20 +537,22 @@ mark_index_3_lf:
    add   edi, 8
    inc   dword cur_line_num
 
-   ;; allocate more memory if needed
+   ;; whether end?
+   cmp   esi, strings_fin
+   jae   mark_index_post
+
+   ;; allocate more memory, if needed, in 'index'
    ensure_mem 16
 
    jmp   mark_index
 mark_index_3_space:
    print_msg_with_line_num err_two_spaces_in_line
    jmp program_exit
-mark_index_3_zero:
-   mov   [edi - 4], ecx
-   jmp mark_index_post
 
 mark_index_post:
 
    %undef cur_line_num
+   %undef strings_fin
    %define index_length [esp + 4]
 
    ;; count index length (number of key-value entries)
@@ -650,7 +653,7 @@ bin_search_loop:
    mov   edi, [ebx + ecx]
    mov   ecx, query_length
    repe  cmpsb
-   jae   .greater               ;; TODO: jae? and further
+   jae   .greater
 
 .lesser:
    ;; query is greater than middle key
