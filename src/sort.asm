@@ -186,7 +186,7 @@ print_num:
 ;;; Return Val: none
 ;;; 
 ;;; Registers Used: all
-;;; Stack Depth: 9 * log(index_length)
+;;; Stack Depth: 8 * log(index_length)
 ;;; 
 ;;;;;;;;; 
 merge_sort:
@@ -280,7 +280,6 @@ merge_sort_combine:
    jge   .copy_first_half
 
    ;; compare current elements
-   ;; TODO: assuming that all keys are different!!!
    ;; first compare lengths
    mov   ecx, [esi + 4]
    cmp   ecx, [edi + 4]
@@ -541,7 +540,7 @@ mark_index_3_ln_ok_len:
    mov   [edi], esi
    mov   [edi - 4], ecx
    add   edi, 8
-   mov   byte [esi - 1], 10     ;; don't like '\r'
+   mov   byte [esi - 1], 10     ;; dont like '\r'
    inc   dword cur_line_num
 
    ;; whether end?
@@ -574,6 +573,78 @@ mark_index_post:
    mov   ecx, edi
    mov   esi, index
    call  merge_sort
+
+   ;;
+   ;; squashing key duplicates in index
+   ;;
+   ;; having 2 pointers, one goes through index and another points
+   ;; on last element of currently building array
+   ;;
+
+   %define index_fin [esp + 20]
+
+   mov   ebx, index             ;; pointer to element of newly built array
+   mov   edx, ebx               ;; pointer to element of current array
+   mov   eax, index_length      ;; array end
+   shl   eax, 4
+   add   eax, ebx
+   mov   index_fin, eax
+
+squash_dups:
+   add   ebx, 16
+
+   ;; whether end?
+   cmp   ebx, index_fin
+   ja    squash_dups_post
+
+   ;; compare length
+   mov   ecx, [ebx + 4]
+   cmp   ecx, [edx + 4]
+   jnz   .nonequal
+
+   ;; then compare content
+   mov   esi, [ebx]
+   mov   edi, [edx]
+   ;; ecx initialized
+   repe  cmpsb
+   jne   .nonequal
+   jmp   .equal
+
+.nonequal:
+   ;; if not equal, go further
+   add   edx, 16
+
+   mov   eax, [ebx + 0]
+   mov   [edx + 0], eax
+   mov   eax, [ebx + 4]
+   mov   [edx + 4], eax
+.equal:
+   ;; and in any case copy content
+   mov   eax, [ebx + 8]
+   mov   [edx + 8], eax
+   mov   eax, [ebx + 12]
+   mov   [edx + 12], eax
+   jmp   squash_dups
+
+
+   ;; if squashed something,
+   ;; set end of new array to zeros for pleasure debugging
+squash_dups_post:
+
+   cmp   edx, index_fin
+   jae   squash_dups_no_stub_at_fin
+
+   mov   edi, edx
+   mov   ecx, 4
+   xor   eax, eax
+   rep   stosd
+
+squash_dups_no_stub_at_fin:
+
+   ;; reassign length
+   sub   edx, index
+   shr   edx, 4
+   mov   index_length, edx
 
    ;;
    ;; serve queries
