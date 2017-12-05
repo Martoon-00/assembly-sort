@@ -125,6 +125,8 @@
 
    alloc_msg err_no_spaces_in_line, "No space found in line "
    alloc_msg err_two_spaces_in_line, "More than one space detected on line "
+   alloc_msg err_empty_key, "Empty key passed on line "
+   alloc_msg err_empty_value, "Empty value passed on line "
 
    alloc_msg err_unexpected_space_in_query, "Unexpected space in query", 10
    alloc_msg err_key_not_found, "Key not found", 10
@@ -489,11 +491,9 @@ mark_index_1:
    lodsb                        ; same as "mov al, [esi]; inc esi"
    jmp   [mark_index_1_table + 4 * eax]
 
-mark_index_1_space:             ;; TODO: is it ok to have "" as key? as value?
-   mov   [edi], esi
-   mov   [edi - 4], ecx
-   add   edi, 8
-   jmp   mark_index_mid
+mark_index_1_space:
+   print_err_with_line_num err_empty_key
+   jmp   program_exit
 mark_index_1_ln:
    inc   dword [edi - 8]        ; correct last set index value to point to
                                 ; start of next line rather than this line
@@ -531,6 +531,13 @@ mark_index_3:
    jmp   [mark_index_3_table + 4 * eax]
 
 mark_index_3_ln:
+   test  ecx, ecx
+   jnz   mark_index_3_ln_ok_len
+
+   print_err_with_line_num err_empty_value
+   jmp program_exit
+
+mark_index_3_ln_ok_len:
    mov   [edi], esi
    mov   [edi - 4], ecx
    add   edi, 8
