@@ -5,14 +5,25 @@
    ;;
 
 
-   ;; Accepts name of label refering to string and prints it.
+   ;; Accepts name of label %2 refering to string and prints it to %1 file
+   ;; descriptor. 
    ;; Assumes that variable <labelname>_len is defined and set to length.
-   %macro print_msg 1
+   %macro print_to 2
    mov   eax, 4                 ; write
-   mov   ebx, 1                 ; to stdout
-   mov   edx, %1_len
-   mov   ecx, %1
+   mov   ebx, %1
+   mov   edx, %2_len
+   mov   ecx, %2
    int   0x80
+   %endmacro 
+
+   ;; Shortcut of 'print_msg_to' to print to stdout
+   %macro print_msg 1
+   print_to 1, %1
+   %endmacro 
+
+   ;; Shortcut of 'print_msg_to' to print to stderr
+   %macro print_err 1
+   print_to 2, %1
    %endmacro 
 
    ;; Creates a label with specified name refering given string.
@@ -34,7 +45,7 @@
 
    ;; Ensures that at least %1 bytes in front of %edi are allocated memory.
    ;; Allocates %2 bytes if more memory is needed.
-   ;; Wastes %eax and %ebx like sys_brk() call.
+   ;; Burns %eax and %ebx like sys_brk() call.
    %macro ensure_mem_with 2
    mov   eax, 45                ;; sys_brk
    xor   ebx, ebx               ;; just get current heap end
@@ -45,7 +56,7 @@
    sub   ebx, edi
    jge   %%skip_alloc
 
-   lea   ebx, [eax + %2] ;; move heap end on PAGE_SIZE
+   lea   ebx, [eax + %2]        ;; move heap end on PAGE_SIZE
    mov   eax, 45                ;; sys_brk
    int   0x80
 %%skip_alloc:
@@ -155,7 +166,7 @@ print_num:
    jnz   .loop
    
    mov   eax, 4                 ; write
-   mov   ebx, 1                 ; to stdout
+   mov   ebx, 2                 ; to stderr
    lea   ecx, [edi + 1]
    mov   edx, esi
    sub   edx, edi
@@ -363,12 +374,12 @@ _start:
    cmp   eax, -2
    jz    open_file_not_exist
 
-   print_msg err_open_failed
+   print_err err_open_failed
    jmp program_exit   
 open_file_not_exist:
-   print_msg err_open_failed_nofile
-   print_msg input_filename_msg
-   print_msg newline
+   print_err err_open_failed_nofile
+   print_err input_filename_msg
+   print_err newline
    jmp program_exit
 
 open_file_success:
@@ -410,17 +421,17 @@ read_file_error:
    cmp   eax, 4                 ; caught interrupt
    jz    read_file_error_int
 
-   print_msg err_read_unknown
+   print_err err_read_unknown
    jmp   program_exit
 read_file_error_dir:
-   print_msg input_filename_msg
-   print_msg err_read_file_is_dir
+   print_err input_filename_msg
+   print_err err_read_file_is_dir
    jmp   program_exit
 read_file_error_io:
-   print_msg err_read_io
+   print_err err_read_io
    jmp   program_exit
 read_file_error_int:
-   print_msg err_read_int
+   print_err err_read_int
    jmp   program_exit
 
 read_file_post:
@@ -457,11 +468,11 @@ read_file_post:
    mov   [edi], esi
    add   edi, 8
 
-   %macro print_msg_with_line_num 1
-   print_msg %1
+   %macro print_err_with_line_num 1
+   print_err %1
    mov   eax, cur_line_num
    call  print_num
-   print_msg newline
+   print_err newline
    %endmacro
 
    ;; when processing data read, we can be in one of two states:
@@ -507,7 +518,7 @@ mark_index_2_space:
    add   edi, 8
    jmp   mark_index_mid
 mark_index_2_ln:
-   print_msg_with_line_num err_no_spaces_in_line
+   print_err_with_line_num err_no_spaces_in_line
    jmp program_exit
 
 mark_index_mid:
@@ -523,6 +534,7 @@ mark_index_3_ln:
    mov   [edi], esi
    mov   [edi - 4], ecx
    add   edi, 8
+   mov   byte [esi - 1], 10     ;; don't like '\r'
    inc   dword cur_line_num
 
    ;; whether end?
@@ -534,7 +546,7 @@ mark_index_3_ln:
 
    jmp   mark_index
 mark_index_3_space:
-   print_msg_with_line_num err_two_spaces_in_line
+   print_err_with_line_num err_two_spaces_in_line
    jmp program_exit
 
 mark_index_post:
@@ -586,7 +598,7 @@ interact_read:
    jmp   [interact_read_table + 4 * eax]
 
 interact_read_space:
-   print_msg err_unexpected_space_in_query
+   print_err err_unexpected_space_in_query
    jmp   interact
 
 interact_read_last_query:
@@ -686,7 +698,7 @@ bin_search_loop_post:
 
 bin_search_not_found:
    ;; print error
-   print_msg err_key_not_found
+   print_err err_key_not_found
    jmp   interact
 
 bin_search_found:
@@ -707,7 +719,19 @@ interact_post:
    ;; exit
    ;;
 
+   ;; since we went so far, let's exit gracefully
+   jmp   program_ok_exit
+
+   ;; for those who exited hacky, no sweet end
 program_exit:
+   mov   ebx, 1                 ;; exit code
+   jmp   program_exit_do
+
+program_ok_exit:
+   xor   ebx, ebx               ;; exit code
+
+program_exit_do:
+
    %undef strings
    %undef index
 
@@ -715,6 +739,5 @@ program_exit:
    %undef stack_allocated
 
    mov   eax, 1                 ; exit program
-   xor   ebx, ebx               ; exit code 0
    int   0x80        
 
