@@ -415,23 +415,23 @@ read_file_success:
    jmp   read_file_strings
 
 read_file_error:
-   cmp   eax, 21                ; file is directory
-   jz    read_file_error_dir
-   cmp   eax, 5                 ; I/O error
-   jz    read_file_error_io
-   cmp   eax, 4                 ; caught interrupt
-   jz    read_file_error_int
+   cmp   eax, -21                ; file is directory
+   jz    .error_dir
+   cmp   eax, -5                 ; I/O error
+   jz    .error_io
+   cmp   eax, -4                 ; caught interrupt
+   jz    .error_int
 
    print_err err_read_unknown
    jmp   program_exit
-read_file_error_dir:
+.error_dir:
    print_err input_filename_msg
    print_err err_read_file_is_dir
    jmp   program_exit
-read_file_error_io:
+.error_io:
    print_err err_read_io
    jmp   program_exit
-read_file_error_int:
+.error_int:
    print_err err_read_int
    jmp   program_exit
 
@@ -668,12 +668,28 @@ interact_read:
    mov   edx, 1                 ; only 1 byte
    int   0x80
 
-   test  eax, eax
+   cmp   eax, 0
    jz    interact_read_last_query
+   jl    interact_read_error
 
    xor   eax, eax
    lodsb
    jmp   [interact_read_table + 4 * eax]
+
+interact_read_error:
+   cmp   eax, -5                 ; I/O error
+   jz    .error_io
+   cmp   eax, -4                 ; caught interrupt
+   jz    .error_int
+
+   print_err err_read_unknown
+   jmp   program_exit
+.error_io:
+   print_err err_read_io
+   jmp   program_exit
+.error_int:
+   print_err err_read_int
+   jmp   program_exit
 
 interact_read_space:
    print_err err_unexpected_space_in_query
