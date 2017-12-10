@@ -291,7 +291,7 @@ merge_sort_combine:
    mov   edi, [edi]
    ;; ecx initialized
    repe  cmpsb
-   ja    .greater
+   jg    .greater
 
 .lesser:
    mov   esi, source
